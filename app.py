@@ -43,10 +43,10 @@ with st.sidebar:
     model_option = st.selectbox(
         "Modell wählen:",
         (
-            "Gemini 2.5 Flash (Google)",
-            "Gemini 2.5 Pro (Google)",
-            "GPT-4o (OpenAI)",
-            "GPT-4o-mini (OpenAI)"
+            "Gemini 2.5 Flash (FREE)",
+            "Gemini 2.5 Pro (Credits)",
+            "GPT-4o (Credits)",
+            "GPT-4o-mini (FREE)"
         )
     )
     
