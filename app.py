@@ -1,9 +1,10 @@
 import streamlit as st
 import google.generativeai as genai
 import datetime
+from PIL import Image
 
-# --- SEITEN KONFIGURATION ---
-st.set_page_config(page_title="Work Assistant", page_icon="🚀", layout="centered")
+# --- 1. LAYOUT AUF "BREIT" STELLEN ---
+st.set_page_config(page_title="Work Assistant Pro", page_icon="🚀", layout="wide")
 
 # --- SICHERHEITS-CHECK ---
 correct_password = st.secrets.get("APP_PASSWORD")
@@ -22,79 +23,99 @@ if not st.session_state.authenticated:
             st.error("Falsches Passwort")
     st.stop()
 
-# --- HAUPT-ANWENDUNG ---
-st.title("🤖 Assistant (Gemini 2.5 Flash)")
+# --- SETUP ---
+st.title("🤖 Assistant Pro (Multimodal)")
 
-# API Key laden
 api_key = st.secrets.get("GOOGLE_API_KEY")
-
 if not api_key:
     st.error("API Key fehlt.")
     st.stop()
 
 try:
     genai.configure(api_key=api_key)
-    # Dein funktionierendes Modell:
     model = genai.GenerativeModel('gemini-2.5-flash') 
 except Exception as e:
     st.error(f"Verbindungsfehler: {e}")
     st.stop()
 
-# Chat Historie initialisieren
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- SIDEBAR (DIE NEUE FUNKTION) ---
+# --- SIDEBAR FUNKTIONEN ---
 with st.sidebar:
-    st.header("Verwaltung")
+    st.header("Werkzeuge")
     
-    # 1. Neuer Chat Button
-    if st.button("🗑️ Neuer Chat starten", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
+    # BILD UPLOAD
+    uploaded_file = st.file_uploader("Bild analysieren (Screenshot/Diagramm)", type=["jpg", "png", "jpeg"])
     
     st.divider()
     
-    # 2. Download Button
-    # Wir wandeln den Chat in einen simplen Text um
+    if st.button("🗑️ Neuer Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+    
+    # DOWNLOAD LOGIK
     chat_export = ""
     for msg in st.session_state.messages:
         role = "ICH" if msg["role"] == "user" else "AI"
-        chat_export += f"{role}:\n{msg['content']}\n\n---\n\n"
+        # Wir filtern Bild-Daten aus dem Text-Export heraus
+        content_text = msg["content"] if isinstance(msg["content"], str) else "[BILD UPLOAD]"
+        chat_export += f"{role}:\n{content_text}\n\n---\n\n"
     
-    # Zeitstempel für den Dateinamen
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-    
-    st.download_button(
-        label="💾 Chat speichern (.txt)",
-        data=chat_export,
-        file_name=f"chat_verlauf_{timestamp}.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
-    
-    st.info("Hinweis: Da dies eine Cloud-App ist, wird der Chat gelöscht, wenn du den Tab schließt. Speichere wichtige Infos!")
+    st.download_button("💾 Chat speichern", chat_export, file_name=f"chat_{timestamp}.txt")
 
-# --- CHAT VERLAUF ANZEIGEN ---
+# --- CHAT VERLAUF ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        # Wenn der Inhalt ein String ist, zeige ihn an. Wenn nicht (Bild), zeige Hinweis.
+        if isinstance(message["content"], str):
+            st.markdown(message["content"])
+        else:
+            st.image(message["content"][0], caption="Hochgeladenes Bild", width=300)
 
-# --- INPUT ---
-if prompt := st.chat_input("Wie kann ich helfen?"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# --- EINGABE & VERARBEITUNG ---
+if prompt := st.chat_input("Nachricht eingeben..."):
+    
+    # 1. User Input vorbereiten
+    if uploaded_file:
+        # Wenn ein Bild da ist, öffnen wir es mit PIL
+        image = Image.open(uploaded_file)
+        # Wir speichern das Bild und den Text als Liste für die Anzeige
+        user_content_for_display = [image, prompt] # Liste für Streamlit Anzeige
+        user_content_for_api = [prompt, image]     # Liste für Gemini API
+        
+        st.session_state.messages.append({"role": "user", "content": user_content_for_display})
+        with st.chat_message("user"):
+            st.image(image, width=300)
+            st.markdown(prompt)
+    else:
+        # Nur Text
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
+    # 2. Antwort generieren
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         try:
-            history_gemini = [
-                {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
-                for m in st.session_state.messages if m["role"] != "system"
-            ]
-            chat = model.start_chat(history=history_gemini[:-1])
-            response = chat.send_message(prompt, stream=True)
+            # History bauen (Achtung: Bilder in der History sind komplex, 
+            # für diese einfache App senden wir Bilder nur im *aktuellen* Turn)
+            # Wir nehmen für die History nur Text-Teile der Vergangenheit, um Fehler zu vermeiden
+            history_gemini = []
+            for m in st.session_state.messages[:-1]:
+                if isinstance(m["content"], str):
+                     history_gemini.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
+            
+            # Chat starten
+            chat = model.start_chat(history=history_gemini)
+            
+            # Nachricht senden (Entweder Text oder Text+Bild)
+            if uploaded_file:
+                # API Call mit Bild (Image Objekt direkt an Gemini senden)
+                response = chat.send_message(user_content_for_api, stream=True)
+            else:
+                response = chat.send_message(prompt, stream=True)
             
             full_response = ""
             for chunk in response:
