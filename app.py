@@ -46,7 +46,7 @@ with st.sidebar:
             "Gemini 2.5 Flash (FREE)",
             "Gemini 2.5 Pro (Credits)",
             "GPT-4o (Credits)",
-            "GPT-4o-mini (FREE)"
+            "GPT-4o-mini (Credits)"
         )
     )
     
