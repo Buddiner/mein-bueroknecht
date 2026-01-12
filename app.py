@@ -1,13 +1,13 @@
 import streamlit as st
 import google.generativeai as genai
+from openai import OpenAI
 import datetime
 from PIL import Image
 
-# --- 1. LAYOUT AUF "BREIT" STELLEN ---
-st.set_page_config(page_title="Work Assistant Pro", page_icon="🚀", layout="wide")
+# --- KONFIGURATION ---
+st.set_page_config(page_title="AI Multi-Tool", page_icon="🧠", layout="wide")
 
-# --- SICHERHEITS-CHECK ---
-
+# --- SICHERHEITS-CHECK (LOGIN) ---
 correct_password = st.secrets.get("APP_PASSWORD")
 
 if "authenticated" not in st.session_state:
@@ -15,124 +15,169 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state.authenticated:
     st.title("🔒 Login")
-    
-    # ÄNDERUNG: Wir nutzen st.form, damit "Enter" funktioniert
     with st.form("login_form"):
         password_input = st.text_input("Zugangscode eingeben", type="password")
-        # Dieser Button reagiert nun automatisch auf die Enter-Taste im Textfeld
         submit_button = st.form_submit_button("Anmelden")
-
+        
     if submit_button:
         if password_input == correct_password:
             st.session_state.authenticated = True
             st.rerun()
         else:
             st.error("Falsches Passwort")
-            
-    st.stop() # Stoppt hier, solange nicht eingeloggt
-
-# --- SETUP ---
-st.title("🤖 Assistant Pro (Multimodal)")
-
-api_key = st.secrets.get("GOOGLE_API_KEY")
-if not api_key:
-    st.error("API Key fehlt.")
     st.stop()
 
-try:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash') 
-except Exception as e:
-    st.error(f"Verbindungsfehler: {e}")
-    st.stop()
+# --- HAUPT-ANWENDUNG ---
+st.title("🤖 Multi-Model Assistant")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# --- SIDEBAR FUNKTIONEN ---
+# --- SIDEBAR EINSTELLUNGEN ---
 with st.sidebar:
-    st.header("Werkzeuge")
+    st.header("⚙️ Konfiguration")
     
-    # BILD UPLOAD
-    uploaded_file = st.file_uploader("Bild analysieren (Screenshot/Diagramm)", type=["jpg", "png", "jpeg"])
+    # 1. Modell Auswahl
+    model_option = st.selectbox(
+        "Modell wählen:",
+        (
+            "Gemini 2.5 Flash (Google)",
+            "Gemini 2.5 Pro (Google)",
+            "GPT-4o (OpenAI)",
+            "GPT-4o-mini (OpenAI)"
+        )
+    )
     
     st.divider()
     
+    # 2. Upload (Nur für Gemini aktiviert in dieser Version)
+    uploaded_file = None
+    if "Gemini" in model_option:
+        uploaded_file = st.file_uploader("Bild analysieren", type=["jpg", "png", "jpeg"])
+    else:
+        st.info("Bild-Upload aktuell nur für Gemini Modelle aktiv.")
+
+    st.divider()
+    
+    # 3. Reset & Download
     if st.button("🗑️ Neuer Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
-    
-    # DOWNLOAD LOGIK
+        
+    # Download Logik
     chat_export = ""
     for msg in st.session_state.messages:
-        role = "ICH" if msg["role"] == "user" else "AI"
-        # Wir filtern Bild-Daten aus dem Text-Export heraus
-        content_text = msg["content"] if isinstance(msg["content"], str) else "[BILD UPLOAD]"
-        chat_export += f"{role}:\n{content_text}\n\n---\n\n"
-    
+        content = msg["content"]
+        if not isinstance(content, str): content = "[BILD]"
+        chat_export += f"{msg['role'].upper()}: {content}\n\n"
+        
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     st.download_button("💾 Chat speichern", chat_export, file_name=f"chat_{timestamp}.txt")
 
-# --- CHAT VERLAUF ---
+# --- API KEYS LADEN ---
+google_api_key = st.secrets.get("GOOGLE_API_KEY")
+openai_api_key = st.secrets.get("OPENAI_API_KEY")
+
+# --- CHAT LOGIK ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Verlauf anzeigen
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        # Wenn der Inhalt ein String ist, zeige ihn an. Wenn nicht (Bild), zeige Hinweis.
         if isinstance(message["content"], str):
             st.markdown(message["content"])
         else:
-            st.image(message["content"][0], caption="Hochgeladenes Bild", width=300)
+            # Wenn Bildinhalt gespeichert wurde (Liste [Bild, Text])
+            st.image(message["content"][0], width=300)
+            st.markdown(message["content"][1])
 
-# --- EINGABE & VERARBEITUNG ---
+# Input Verarbeitung
 if prompt := st.chat_input("Nachricht eingeben..."):
     
-    # 1. User Input vorbereiten
-    if uploaded_file:
-        # Wenn ein Bild da ist, öffnen wir es mit PIL
+    # User Input anzeigen
+    if uploaded_file and "Gemini" in model_option:
         image = Image.open(uploaded_file)
-        # Wir speichern das Bild und den Text als Liste für die Anzeige
-        user_content_for_display = [image, prompt] # Liste für Streamlit Anzeige
-        user_content_for_api = [prompt, image]     # Liste für Gemini API
-        
-        st.session_state.messages.append({"role": "user", "content": user_content_for_display})
+        st.session_state.messages.append({"role": "user", "content": [image, prompt]})
         with st.chat_message("user"):
             st.image(image, width=300)
             st.markdown(prompt)
     else:
-        # Nur Text
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-    # 2. Antwort generieren
+    # ANTWORT GENERIEREN
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
+        full_response = ""
+        
         try:
-            # History bauen (Achtung: Bilder in der History sind komplex, 
-            # für diese einfache App senden wir Bilder nur im *aktuellen* Turn)
-            # Wir nehmen für die History nur Text-Teile der Vergangenheit, um Fehler zu vermeiden
-            history_gemini = []
-            for m in st.session_state.messages[:-1]:
-                if isinstance(m["content"], str):
-                     history_gemini.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
-            
-            # Chat starten
-            chat = model.start_chat(history=history_gemini)
-            
-            # Nachricht senden (Entweder Text oder Text+Bild)
-            if uploaded_file:
-                # API Call mit Bild (Image Objekt direkt an Gemini senden)
-                response = chat.send_message(user_content_for_api, stream=True)
-            else:
-                response = chat.send_message(prompt, stream=True)
-            
-            full_response = ""
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
-            
+            # --- FALL A: GOOGLE GEMINI ---
+            if "Gemini" in model_option:
+                if not google_api_key:
+                    st.error("Google API Key fehlt in Secrets!")
+                    st.stop()
+                
+                genai.configure(api_key=google_api_key)
+                
+                # Modell-Name mappen
+                if "Flash" in model_option:
+                    model_name = "gemini-2.5-flash"
+                else:
+                    model_name = "gemini-2.5-pro" # Oder 2.0-pro je nach Verfügbarkeit
+                
+                model = genai.GenerativeModel(model_name)
+                
+                # History für Google aufbereiten (nur Text-Teile für Stabilität)
+                gemini_history = []
+                for m in st.session_state.messages[:-1]:
+                    if isinstance(m["content"], str):
+                         gemini_history.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
+
+                chat = model.start_chat(history=gemini_history)
+                
+                # Senden (mit oder ohne Bild)
+                if uploaded_file:
+                    image = st.session_state.messages[-1]["content"][0]
+                    response = chat.send_message([prompt, image], stream=True)
+                else:
+                    response = chat.send_message(prompt, stream=True)
+                
+                for chunk in response:
+                    if chunk.text:
+                        full_response += chunk.text
+                        message_placeholder.markdown(full_response + "▌")
+
+            # --- FALL B: OPENAI CHATGPT ---
+            elif "GPT" in model_option:
+                if not openai_api_key:
+                    st.error("OpenAI API Key fehlt in Secrets! Bitte nachtragen.")
+                    st.stop()
+                
+                client = OpenAI(api_key=openai_api_key)
+                
+                # Modell-Name mappen
+                gpt_model = "gpt-4o" if "GPT-4o" in model_option and "mini" not in model_option else "gpt-4o-mini"
+                
+                # History für OpenAI aufbereiten
+                openai_messages = []
+                for m in st.session_state.messages:
+                    # Einfache Text-History (Bilder ignorieren wir hier vorerst für Stabilität)
+                    content_str = m["content"] if isinstance(m["content"], str) else m["content"][1]
+                    openai_messages.append({"role": m["role"], "content": content_str})
+                
+                stream = client.chat.completions.create(
+                    model=gpt_model,
+                    messages=openai_messages,
+                    stream=True,
+                )
+                
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        full_response += chunk.choices[0].delta.content
+                        message_placeholder.markdown(full_response + "▌")
+
+            # Abschluss
             message_placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+
         except Exception as e:
             message_placeholder.error(f"Fehler: {e}")
