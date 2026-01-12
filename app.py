@@ -7,6 +7,7 @@ from PIL import Image
 st.set_page_config(page_title="Work Assistant Pro", page_icon="🚀", layout="wide")
 
 # --- SICHERHEITS-CHECK ---
+
 correct_password = st.secrets.get("APP_PASSWORD")
 
 if "authenticated" not in st.session_state:
@@ -14,14 +15,21 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state.authenticated:
     st.title("🔒 Login")
-    password_input = st.text_input("Zugangscode eingeben", type="password")
-    if st.button("Anmelden"):
+    
+    # ÄNDERUNG: Wir nutzen st.form, damit "Enter" funktioniert
+    with st.form("login_form"):
+        password_input = st.text_input("Zugangscode eingeben", type="password")
+        # Dieser Button reagiert nun automatisch auf die Enter-Taste im Textfeld
+        submit_button = st.form_submit_button("Anmelden")
+
+    if submit_button:
         if password_input == correct_password:
             st.session_state.authenticated = True
             st.rerun()
         else:
             st.error("Falsches Passwort")
-    st.stop()
+            
+    st.stop() # Stoppt hier, solange nicht eingeloggt
 
 # --- SETUP ---
 st.title("🤖 Assistant Pro (Multimodal)")
