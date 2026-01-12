@@ -39,7 +39,7 @@ if not api_key:
 try:
     genai.configure(api_key=api_key)
     # Hier nutzen wir das Pro Modell
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-pro')
 except Exception as e:
     st.error(f"Fehler bei der Verbindung: {e}")
     st.stop()
