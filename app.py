@@ -7,6 +7,11 @@ from PIL import Image
 # --- KONFIGURATION ---
 st.set_page_config(page_title="AI Multi-Tool", page_icon="🧠", layout="wide")
 
+# --- WICHTIG: INITIALISIERUNG VOR ALLEM ANDEREN ---
+# Wir müssen das Gedächtnis erstellen, BEVOR wir es in der Sidebar nutzen wollen
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
 # --- SICHERHEITS-CHECK (LOGIN) ---
 correct_password = st.secrets.get("APP_PASSWORD")
 
@@ -47,7 +52,7 @@ with st.sidebar:
     
     st.divider()
     
-    # 2. Upload (Nur für Gemini aktiviert in dieser Version)
+    # 2. Upload (Nur für Gemini aktiviert)
     uploaded_file = None
     if "Gemini" in model_option:
         uploaded_file = st.file_uploader("Bild analysieren", type=["jpg", "png", "jpeg"])
@@ -61,11 +66,14 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
         
-    # Download Logik
+    # Download Logik (Funktioniert jetzt, weil messages oben schon erstellt wurde)
     chat_export = ""
     for msg in st.session_state.messages:
         content = msg["content"]
-        if not isinstance(content, str): content = "[BILD]"
+        # Falls Inhalt kein String ist (sondern [Bild, Text]), nehmen wir nur den Text
+        if not isinstance(content, str): 
+            content = content[1] # Der Text ist das zweite Element in der Liste
+        
         chat_export += f"{msg['role'].upper()}: {content}\n\n"
         
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -75,11 +83,7 @@ with st.sidebar:
 google_api_key = st.secrets.get("GOOGLE_API_KEY")
 openai_api_key = st.secrets.get("OPENAI_API_KEY")
 
-# --- CHAT LOGIK ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Verlauf anzeigen
+# --- CHAT VERLAUF ANZEIGEN ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if isinstance(message["content"], str):
@@ -89,17 +93,19 @@ for message in st.session_state.messages:
             st.image(message["content"][0], width=300)
             st.markdown(message["content"][1])
 
-# Input Verarbeitung
+# --- INPUT VERARBEITUNG ---
 if prompt := st.chat_input("Nachricht eingeben..."):
     
-    # User Input anzeigen
+    # User Input anzeigen und speichern
     if uploaded_file and "Gemini" in model_option:
         image = Image.open(uploaded_file)
+        # Speichere als Liste [Bild, Text]
         st.session_state.messages.append({"role": "user", "content": [image, prompt]})
         with st.chat_message("user"):
             st.image(image, width=300)
             st.markdown(prompt)
     else:
+        # Speichere als Text
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -122,7 +128,7 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 if "Flash" in model_option:
                     model_name = "gemini-2.5-flash"
                 else:
-                    model_name = "gemini-2.5-pro" # Oder 2.0-pro je nach Verfügbarkeit
+                    model_name = "gemini-2.5-pro" # Fallback auf 2.0-flash wenn 2.5-pro zickt: 'gemini-2.0-flash'
                 
                 model = genai.GenerativeModel(model_name)
                 
@@ -136,8 +142,11 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 
                 # Senden (mit oder ohne Bild)
                 if uploaded_file:
-                    image = st.session_state.messages[-1]["content"][0]
-                    response = chat.send_message([prompt, image], stream=True)
+                    # Wir müssen das Bild-Objekt wieder aus dem Session State holen
+                    # Das letzte Element in messages ist unser aktueller Prompt [Bild, Text]
+                    last_msg_content = st.session_state.messages[-1]["content"]
+                    image_obj = last_msg_content[0]
+                    response = chat.send_message([prompt, image_obj], stream=True)
                 else:
                     response = chat.send_message(prompt, stream=True)
                 
@@ -161,7 +170,10 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 openai_messages = []
                 for m in st.session_state.messages:
                     # Einfache Text-History (Bilder ignorieren wir hier vorerst für Stabilität)
-                    content_str = m["content"] if isinstance(m["content"], str) else m["content"][1]
+                    content_str = m["content"]
+                    if not isinstance(content_str, str):
+                        content_str = content_str[1] # Nur Textteil nehmen
+                        
                     openai_messages.append({"role": m["role"], "content": content_str})
                 
                 stream = client.chat.completions.create(
