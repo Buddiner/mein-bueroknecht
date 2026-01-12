@@ -7,13 +7,11 @@ from PIL import Image
 # --- KONFIGURATION ---
 st.set_page_config(page_title="AI Multi-Tool", page_icon="🧠", layout="wide")
 
-# --- INITIALISIERUNG ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- SICHERHEITS-CHECK (LOGIN) ---
+# --- SICHERHEITS-CHECK ---
 correct_password = st.secrets.get("APP_PASSWORD")
-
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -22,7 +20,6 @@ if not st.session_state.authenticated:
     with st.form("login_form"):
         password_input = st.text_input("Zugangscode eingeben", type="password")
         submit_button = st.form_submit_button("Anmelden")
-        
     if submit_button:
         if password_input == correct_password:
             st.session_state.authenticated = True
@@ -34,48 +31,42 @@ if not st.session_state.authenticated:
 # --- HAUPT-ANWENDUNG ---
 st.title("🤖 Multi-Model Assistant")
 
-# --- SIDEBAR EINSTELLUNGEN ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Konfiguration")
     
-    # 1. MODELL AUSWAHL (Hier sind die Neuen!)
-    # Wir nutzen ein "Dictionary" (Mapping), um den Anzeigenamen mit der technischen ID zu verknüpfen
+    # MODELL-LISTE: Klar gekennzeichnet was gratis ist
     model_map = {
-        "Gemini 2.5 Flash (FREE)": "gemini-2.5-flash",
-        "Gemini 2.5 Pro (CREDITS)": "gemini-2.5-pro",
-        "Gemini 3.0 Flash (Preview)": "gemini-3-flash-preview",  # NEU
-        "Gemini Flash (Latest FREE)": "gemini-flash-latest",          # NEU
-        "GPT-4o (CREDITS)": "gpt-4o",
-        "GPT-4o-mini (CREDITS)": "gpt-4o-mini"
+        "🟢 Gemini 2.0 Flash (GRATIS & Stabil)": "gemini-2.0-flash",
+        "🟢 Gemini 2.5 Flash (GRATIS & Neu)": "gemini-2.5-flash",
+        "🧪 Gemini 3.0 Flash (Preview)": "gemini-3-flash-preview",
+        "💲 Gemini 2.5 Pro (Credits nötig)": "gemini-2.5-pro",
+        "💲 GPT-4o (OpenAI Credits)": "gpt-4o",
+        "💲 GPT-4o-mini (OpenAI Credits)": "gpt-4o-mini"
     }
     
     selected_label = st.selectbox("Modell wählen:", options=list(model_map.keys()))
-    
-    # Die echte ID für den Code holen (z.B. "gemini-3-flash-preview")
     selected_model_id = model_map[selected_label]
+    
+    st.info(f"Technischer Name: `{selected_model_id}`") # Beweis für dich
     
     st.divider()
     
-    # 2. Upload (Nur für Gemini)
+    # Upload & Reset
     uploaded_file = None
     if "gemini" in selected_model_id:
         uploaded_file = st.file_uploader("Bild analysieren", type=["jpg", "png", "jpeg"])
-    else:
-        st.info("Bild-Upload nur bei Gemini aktiv.")
-
-    st.divider()
     
-    # 3. Reset & Download
     if st.button("🗑️ Neuer Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
-        
+
+    # Download
     chat_export = ""
     for msg in st.session_state.messages:
-        content = msg["content"]
-        if not isinstance(content, str): content = content[1] # Text aus Liste holen
-        chat_export += f"{msg['role'].upper()}: {content}\n\n"
-        
+        c = msg["content"]
+        if not isinstance(c, str): c = c[1]
+        chat_export += f"{msg['role'].upper()}: {c}\n\n"
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     st.download_button("💾 Chat speichern", chat_export, file_name=f"chat_{timestamp}.txt")
 
@@ -83,7 +74,7 @@ with st.sidebar:
 google_api_key = st.secrets.get("GOOGLE_API_KEY")
 openai_api_key = st.secrets.get("OPENAI_API_KEY")
 
-# --- CHAT VERLAUF ---
+# --- ANZEIGE ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if isinstance(message["content"], str):
@@ -92,10 +83,10 @@ for message in st.session_state.messages:
             st.image(message["content"][0], width=300)
             st.markdown(message["content"][1])
 
-# --- INPUT ---
+# --- INPUT & LOGIK ---
 if prompt := st.chat_input("Nachricht eingeben..."):
     
-    # User Input speichern
+    # Speichern
     if uploaded_file and "gemini" in selected_model_id:
         image = Image.open(uploaded_file)
         st.session_state.messages.append({"role": "user", "content": [image, prompt]})
@@ -107,13 +98,13 @@ if prompt := st.chat_input("Nachricht eingeben..."):
         with st.chat_message("user"):
             st.markdown(prompt)
 
-    # ANTWORT
+    # Antworten
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
         
         try:
-            # --- FALL A: GOOGLE GEMINI ---
+            # --- GOOGLE GEMINI ---
             if "gemini" in selected_model_id:
                 if not google_api_key:
                     st.error("Google API Key fehlt!")
@@ -121,10 +112,16 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 
                 genai.configure(api_key=google_api_key)
                 
-                # Wir nutzen hier direkt die ID aus der Sidebar-Auswahl
-                model = genai.GenerativeModel(selected_model_id)
+                # HIER IST DER TRICK: System Instruction setzen!
+                # Wir zwingen das Modell zu wissen, wer es ist.
+                sys_instruct = f"Du bist das Modell {selected_label}. Antworte präzise und hilfreich."
                 
-                # History (Nur Text)
+                model = genai.GenerativeModel(
+                    selected_model_id,
+                    system_instruction=sys_instruct
+                )
+                
+                # History (Text only)
                 gemini_history = []
                 for m in st.session_state.messages[:-1]:
                     if isinstance(m["content"], str):
@@ -133,8 +130,8 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 chat = model.start_chat(history=gemini_history)
                 
                 if uploaded_file:
-                    last_msg_content = st.session_state.messages[-1]["content"]
-                    response = chat.send_message([prompt, last_msg_content[0]], stream=True)
+                    last_content = st.session_state.messages[-1]["content"]
+                    response = chat.send_message([prompt, last_content[0]], stream=True)
                 else:
                     response = chat.send_message(prompt, stream=True)
                 
@@ -143,7 +140,7 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                         full_response += chunk.text
                         message_placeholder.markdown(full_response + "▌")
 
-            # --- FALL B: OPENAI CHATGPT ---
+            # --- OPENAI ---
             elif "gpt" in selected_model_id:
                 if not openai_api_key:
                     st.error("OpenAI API Key fehlt!")
@@ -151,15 +148,15 @@ if prompt := st.chat_input("Nachricht eingeben..."):
                 
                 client = OpenAI(api_key=openai_api_key)
                 
-                openai_messages = []
+                openai_msgs = [{"role": "system", "content": f"Du bist {selected_label}."}]
                 for m in st.session_state.messages:
-                    content_str = m["content"]
-                    if not isinstance(content_str, str): content_str = content_str[1]
-                    openai_messages.append({"role": m["role"], "content": content_str})
+                    c = m["content"]
+                    if not isinstance(c, str): c = c[1]
+                    openai_msgs.append({"role": m["role"], "content": c})
                 
                 stream = client.chat.completions.create(
-                    model=selected_model_id, # Hier nutzen wir auch direkt die ID
-                    messages=openai_messages,
+                    model=selected_model_id,
+                    messages=openai_msgs,
                     stream=True,
                 )
                 
@@ -172,4 +169,9 @@ if prompt := st.chat_input("Nachricht eingeben..."):
             st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         except Exception as e:
-            message_placeholder.error(f"Fehler: {e}")
+            # Spezielle Fehlerbehandlung für das "Pro" Problem
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower():
+                st.error("⚠️ QUOTA FEHLER: Dieses Modell (wahrscheinlich Pro) hat keine kostenlose Nutzung mehr. Bitte wechsle auf ein 'Flash' Modell.")
+            else:
+                st.error(f"Ein Fehler ist aufgetreten: {e}")
